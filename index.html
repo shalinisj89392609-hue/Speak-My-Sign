@@ -1,0 +1,206 @@
+<!DOCTYPE html><html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SpeakMySign</title><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"><!-- MediaPipe --><script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script><script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script><script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script><style>
+body { margin:0; font-family:'Segoe UI'; background:#eef2ff; }
+header { background:#4a6cf7; color:white; text-align:center; padding:15px; }
+
+.main {
+    display:flex; flex-direction:column; align-items:center;
+    justify-content:center; height:80vh; gap:20px;
+}
+
+.option {
+    width:300px; padding:20px; background:white;
+    border-radius:10px; text-align:center;
+    font-size:20px; font-weight:bold;
+    cursor:pointer; box-shadow:0 4px 10px rgba(0,0,0,0.1);
+}
+
+.section { display:none; text-align:center; padding:20px; }
+canvas { width:300px; border-radius:10px; }
+img.output { width:200px; margin-top:20px; }
+</style></head><body><header>
+    <h2>SpeakMySign</h2>
+    <p>Voice Meets Sign</p>
+</header><!-- HOME --><div class="main" id="home">
+    <div class="option" onclick="openSection('signToSpeak')">Sign → Speak</div>
+    <div class="option" onclick="openSection('speakToSign')">Speak → Sign</div>
+    <div class="option" onclick="openSection('learning')">Learning Module</div>
+</div><!-- SIGN TO SPEAK --><div id="signToSpeak" class="section">
+    <h2>Sign → Speak (AI)</h2><video id="camera" autoplay playsinline style="display:none;"></video>
+<canvas id="canvas" width="300" height="220"></canvas>
+
+<p id="gestureOutput">Click Start and show your hand ✋</p>
+
+<button class="btn btn-primary" onclick="startAI()">Start AI Detection</button>
+<button class="btn btn-secondary" onclick="goHome()">Back</button>
+
+</div><!-- SPEAK TO SIGN --><div id="speakToSign" class="section">
+    <h2>Speak → Sign</h2><input type="text" id="speechInput" class="form-control" placeholder="Type or speak" style="max-width:300px;margin:auto;">
+<button class="btn btn-primary" onclick="startMic()">🎤 Speak</button>
+
+<p id="textOutput"></p>
+<img id="signImage" class="output" src="https://cdn-icons-png.flaticon.com/512/4140/4140048.png">
+
+<button class="btn btn-secondary" onclick="goHome()">Back</button>
+
+</div><!-- LEARNING --><div id="learning" class="section">
+    <h2>Learning Module</h2><button class="btn btn-primary" onclick="learn('hello')">Hello</button>
+<button class="btn btn-primary" onclick="learn('thank you')">Thank You</button>
+<button class="btn btn-primary" onclick="learn('yes')">Yes</button>
+<button class="btn btn-primary" onclick="learn('no')">No</button>
+
+<br>
+<img id="learnImage" class="output">
+
+<button class="btn btn-secondary" onclick="goHome()">Back</button>
+
+</div><script>
+
+/* Navigation */
+function openSection(id){
+    document.getElementById("home").style.display="none";
+    document.querySelectorAll(".section").forEach(s=>s.style.display="none");
+    document.getElementById(id).style.display="block";
+}
+
+function goHome(){
+    document.getElementById("home").style.display="flex";
+    document.querySelectorAll(".section").forEach(s=>s.style.display="none");
+}
+
+/* AI HAND DETECTION */
+
+const videoElement = document.getElementById('camera');
+const canvasElement = document.getElementById('canvas');
+const canvasCtx = canvasElement.getContext('2d');
+
+let lastSpoken = "";
+
+function startAI(){
+
+    const hands = new Hands({
+        locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5
+    });
+
+    hands.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await hands.send({image: videoElement});
+        },
+        width: 300,
+        height: 220
+    });
+
+    camera.start();
+}
+
+function onResults(results){
+
+    canvasCtx.clearRect(0,0,canvasElement.width,canvasElement.height);
+    canvasCtx.drawImage(results.image,0,0,canvasElement.width,canvasElement.height);
+
+    if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){
+
+        const landmarks = results.multiHandLandmarks[0];
+
+        drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS);
+        drawLandmarks(canvasCtx, landmarks);
+
+        let gesture = detectGesture(landmarks);
+        document.getElementById("gestureOutput").innerText = "Detected: " + gesture;
+
+        if(gesture !== "Detecting..." && gesture !== lastSpoken){
+            speak(gesture);
+            lastSpoken = gesture;
+        }
+
+    } else {
+        document.getElementById("gestureOutput").innerText = "Show your hand ✋";
+    }
+}
+
+function detectGesture(landmarks){
+
+    function isUp(tip, pip){
+        return landmarks[tip].y < landmarks[pip].y;
+    }
+
+    let thumb = isUp(4,3);
+    let index = isUp(8,6);
+    let middle = isUp(12,10);
+    let ring = isUp(16,14);
+    let pinky = isUp(20,18);
+
+    let total = [thumb,index,middle,ring,pinky].filter(f=>f).length;
+
+    if(total >= 4) return "Hello";
+    if(total === 0) return "No";
+    if(thumb && total === 1) return "Yes";
+    if(index && total === 1) return "One";
+    if(index && middle && total === 2) return "Two";
+    if(thumb && index && pinky && total === 3) return "I Love You";
+
+    return "Detecting...";
+}
+
+function speak(text){
+    window.speechSynthesis.cancel();
+    let speech = new SpeechSynthesisUtterance(text);
+    speech.lang = "en-IN";
+    window.speechSynthesis.speak(speech);
+}
+
+/* SPEECH TO SIGN */
+
+function startMic(){
+    let recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+    recognition.lang = "en-IN";
+    recognition.start();
+
+    recognition.onresult = function(event){
+        let text = event.results[0][0].transcript.toLowerCase();
+        document.getElementById("speechInput").value = text;
+        document.getElementById("textOutput").innerText = "You said: " + text;
+
+        showSign(text);
+    };
+}
+
+function showSign(text){
+    const signs = {
+        "hello":"https://i.imgur.com/1X4p6Kp.png",
+        "thank you":"https://i.imgur.com/9k7YQpP.png",
+        "yes":"https://i.imgur.com/8Qf6QxH.png",
+        "no":"https://i.imgur.com/Z6XbK7A.png"
+    };
+
+    document.getElementById("signImage").src =
+        signs[text] || "https://cdn-icons-png.flaticon.com/512/4140/4140048.png";
+}
+
+/* LEARNING */
+
+function learn(word){
+    const signs = {
+        "hello":"https://i.imgur.com/1X4p6Kp.png",
+        "thank you":"https://i.imgur.com/9k7YQpP.png",
+        "yes":"https://i.imgur.com/8Qf6QxH.png",
+        "no":"https://i.imgur.com/Z6XbK7A.png"
+    };
+
+    document.getElementById("learnImage").src = signs[word];
+}
+
+</script></body>
+  </html>
